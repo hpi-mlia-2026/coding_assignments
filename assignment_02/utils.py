@@ -38,6 +38,9 @@ class Solver(object):
     solver.train_acc_history and solver.val_acc_history will be lists of the
     accuracies of the model on the training and validation set at each epoch.
 
+    Note: This Solver is designed for numpy-based models and data arrays.
+    It does not move data or model parameters to a PyTorch CUDA device.
+
     Example usage might look something like this:
 
     data = {
@@ -137,6 +140,18 @@ class Solver(object):
         self.print_every = kwargs.pop("print_every", 10)
         self.verbose = kwargs.pop("verbose", True)
 
+        self.log_dir = kwargs.pop("log_dir", None)
+        self.log_writer = kwargs.pop("log_writer", None)
+        if self.log_dir is not None and self.log_writer is None:
+            try:
+                from torch.utils.tensorboard import SummaryWriter
+            except ImportError as e:
+                raise ImportError(
+                    "TensorBoard SummaryWriter is required for logging. "
+                    "Install torch and tensorboard to use log_dir."
+                ) from e
+            self.log_writer = SummaryWriter(log_dir=self.log_dir)
+
         # Throw an error if there are extra keyword arguments
         if len(kwargs) > 0:
             extra = ", ".join('"%s"' % k for k in list(kwargs.keys()))
@@ -193,6 +208,8 @@ class Solver(object):
         # Compute loss and gradient
         loss, grads = self.model.loss(X_batch, y_batch)
         self.loss_history.append(loss)
+        if self.log_writer is not None:
+            self.log_writer.add_scalar("Loss/train_iteration", float(loss), len(self.loss_history) - 1)
 
         # Perform a parameter update
         for p, w in self.model.params.items():
@@ -371,6 +388,15 @@ class Solver(object):
                 self.train_acc_history.append(train_acc)
                 self.val_acc_history.append(val_acc)
                 self._save_checkpoint()
+                if self.log_writer is not None:
+                    self.log_writer.add_scalar("Accuracy/train", float(train_acc), self.epoch)
+                    self.log_writer.add_scalar("Accuracy/val", float(val_acc), self.epoch)
+                    if self.optim_configs:
+                        first_param = next(iter(self.optim_configs.values()))
+                        if "learning_rate" in first_param:
+                            self.log_writer.add_scalar(
+                                "LearningRate/train", float(first_param["learning_rate"]), self.epoch
+                            )
 
                 if self.verbose:
                     print(
@@ -387,6 +413,8 @@ class Solver(object):
 
         # At the end of training swap the best params into the model
         self.model.params = self.best_params
+        if self.log_writer is not None:
+            self.log_writer.close()
 
 
 def eval_numerical_gradient(f, x, verbose=True, h=0.00001):
