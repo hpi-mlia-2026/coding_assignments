@@ -38,9 +38,6 @@ class Solver(object):
     solver.train_acc_history and solver.val_acc_history will be lists of the
     accuracies of the model on the training and validation set at each epoch.
 
-    Note: This Solver is designed for numpy-based models and data arrays.
-    It does not move data or model parameters to a PyTorch CUDA device.
-
     Example usage might look something like this:
 
     data = {
@@ -348,6 +345,16 @@ class Solver(object):
                 'scores': scores}
         return acc, pred
 
+    def _compute_loss(self, X, y, num_samples=None):
+        """Compute loss on a subset of data for logging and validation."""
+        if num_samples is not None and X.shape[0] > num_samples:
+            mask = np.random.choice(X.shape[0], num_samples)
+            X = X[mask]
+            y = y[mask]
+
+        loss, _ = self.model.loss(X, y)
+        return loss
+
     def train(self):
         """
         Run optimization to train the model.
@@ -391,12 +398,8 @@ class Solver(object):
                 if self.log_writer is not None:
                     self.log_writer.add_scalar("Accuracy/train", float(train_acc), self.epoch)
                     self.log_writer.add_scalar("Accuracy/val", float(val_acc), self.epoch)
-                    if self.optim_configs:
-                        first_param = next(iter(self.optim_configs.values()))
-                        if "learning_rate" in first_param:
-                            self.log_writer.add_scalar(
-                                "LearningRate/train", float(first_param["learning_rate"]), self.epoch
-                            )
+                    val_loss = self._compute_loss(self.X_val, self.y_val, num_samples=self.num_val_samples)
+                    self.log_writer.add_scalar("Loss/val_epoch", float(val_loss), self.epoch)
 
                 if self.verbose:
                     print(
